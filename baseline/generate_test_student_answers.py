@@ -8,8 +8,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT_PATH = ROOT_DIR / "datasets" / "test.jsonl"
-DEFAULT_OUTPUT_PATH = ROOT_DIR / "datasets" / "test.jsonl"
+DEFAULT_INPUT_PATH = ROOT_DIR / "data" / "test.jsonl"
+DEFAULT_OUTPUT_PATH = ROOT_DIR / "data" / "test.jsonl"
 DEFAULT_MODEL = "Qwen/Qwen2.5-3B-Instruct"
 
 ANSWER_TYPES = {

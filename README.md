@@ -7,10 +7,10 @@ AI-driven interview simulation and feedback system using Qwen2.5.
 - [x] Student Answer Generation
 - [x] Baseline Feedback Generation
 - [ ] Baseline Feedback Scoring with Qwen3.6
-- [ ] SFT Dataset Construction
-- [ ] SFT with QLoRA
 - [ ] Preference Candidate Generation (RLAIF)
 - [ ] Preference Pair Selection with Qwen3.6 (RLAIF)
+- [ ] SFT Dataset Construction
+- [ ] SFT with QLoRA
 - [ ] DPO Training with QLoRA (RLAIF)
 - [ ] New Model Feedback Generation
 - [ ] New Model Feedback Scoring with Qwen3.6

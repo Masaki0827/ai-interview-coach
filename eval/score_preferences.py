@@ -8,8 +8,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT_PATH = ROOT_DIR / "preference_candidates" / "preference_candidates.jsonl"
-DEFAULT_OUTPUT_PATH = ROOT_DIR / "preference_candidates" / "preference_pairs.jsonl"
+DEFAULT_INPUT_PATH = ROOT_DIR / "train" / "preference_candidates.jsonl"
+DEFAULT_OUTPUT_PATH = ROOT_DIR / "train" / "preference_pairs.jsonl"
 DEFAULT_MODEL = "Qwen/Qwen3.6-35B-A3B"
 
 
@@ -94,6 +94,10 @@ Feedback B:
 
 Select the feedback that is more technically correct, specific, helpful, actionable, and suitable for interview coaching.
 If both are imperfect, choose the one that would better help the student improve.
+Do not prefer A or B because of position, length, formatting, or tone alone.
+A shorter answer can be better if it is more precise and useful.
+A longer answer can be worse if it is generic, repetitive, or unfocused.
+Judge the substance of the feedback, not whether it matches a particular style label.
 
 Return only valid JSON in this exact format:
 {{
@@ -128,6 +132,10 @@ def choose_feedback(model, tokenizer, record, feedback_a_field, feedback_b_field
         "student_answer_type": record.get("student_answer_type", ""),
         "chosen_feedback": record.get(chosen_field, ""),
         "rejected_feedback": record.get(rejected_field, ""),
+        "feedback_a_style": record.get("feedback_a_style", ""),
+        "feedback_b_style": record.get("feedback_b_style", ""),
+        "feedback_a_temperature": record.get("feedback_a_temperature", ""),
+        "feedback_b_temperature": record.get("feedback_b_temperature", ""),
         "winner": winner,
         "reason": str(parsed.get("reason", "")).strip(),
     }

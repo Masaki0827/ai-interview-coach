@@ -5,6 +5,7 @@ from pathlib import Path
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -38,16 +39,25 @@ def load_existing_ids(path):
 def load_model(model_name):
     print(f"Loading judge model: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+
+    # quantization_config = BitsAndBytesConfig(
+    #     load_in_4bit=True,
+    #     bnb_4bit_quant_type="nf4",
+    #     bnb_4bit_compute_dtype=torch.bfloat16,
+    #     bnb_4bit_use_double_quant=True,
+    # )
+
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype="auto",
         device_map="auto",
         trust_remote_code=True,
+        #quantization_config=quantization_config,
     )
     return model, tokenizer
 
 
-def generate_text(model, tokenizer, messages, max_new_tokens=512, temperature=0.1, top_p=0.9):
+def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0.1, top_p=0.9):
     text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -46,16 +47,25 @@ def load_existing_ids(path):
 def load_model(model_name):
     print(f"Loading judge model: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+
+    # quantization_config = BitsAndBytesConfig(
+    #     load_in_4bit=True,
+    #     bnb_4bit_quant_type="nf4",
+    #     bnb_4bit_compute_dtype=torch.bfloat16,
+    #     bnb_4bit_use_double_quant=True,
+    # )
+
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype="auto",
         device_map="auto",
         trust_remote_code=True,
+        #quantization_config=quantization_config,
     )
     return model, tokenizer
 
 
-def generate_text(model, tokenizer, messages, max_new_tokens=512, temperature=0.1, top_p=0.9):
+def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0.1, top_p=0.9):
     text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
@@ -97,12 +107,22 @@ Student answer:
 Coach feedback:
 {record.get(feedback_field, "")}
 
-Score the coach feedback from 1 to 5 for each dimension:
+Score the coach feedback from 1 to 20 for each dimension:
 - technical_correctness: Is the feedback technically accurate?
 - specificity: Does it point to specific strengths, mistakes, or missing details?
 - helpfulness: Would it help the student improve?
 - actionability: Does it give concrete next steps?
 - interview_coaching_quality: Does it sound like useful interview coaching instead of generic commentary?
+
+Scoring calibration (1 to 20 scale):
+- 10 to 12 (Standard / Good): The feedback is normally good, accurate, and generally useful, but lacks deep technical depth or highly tailored guidance.
+- 15 to 17 (Clearly Strong): The feedback is highly precise, technically accurate, identifies specific gaps, and provides clear actionable improvements.
+- 18 to 20 (Exceptional / Near-Perfect): Reserved ONLY for master-class, exceptional coaching. Give this ONLY when the feedback is flawless, extremely precise, and includes concrete examples, tailored code snippets, or explicit next-step practice guidance.
+
+CRITICAL CONSTRAINTS TO AVOID LENIENCY BIAS:
+1. Do NOT give 18-20 for feedback that is merely good, polite, or generally helpful.
+2. If you find and mention ANY "minor inaccuracies", "gaps", "opportunities for deeper elaboration", or "flaws" in your 'reason', you MUST NOT give a score higher than 14 for that specific dimension. 
+3. Be highly critical. A score of 20 means there is absolutely ZERO room for improvement.
 
 Return only valid JSON in this exact format:
 {{
@@ -114,6 +134,16 @@ Return only valid JSON in this exact format:
   "overall_score": 1.0,
   "reason": "..."
 }}
+
+Important output rules:
+- Do not write analysis or step-by-step reasoning.
+- Do not output <think> tags.
+- The first character of your response must be {{.
+- The last character of your response must be }}.
+- Return exactly one compact JSON object.
+- Keep "reason" to one concise sentence under 25 words.
+
+/no_think
 """
 
 
@@ -121,15 +151,19 @@ def normalize_score(value):
     try:
         score = float(value)
     except (TypeError, ValueError):
-        return 3.0
-    return min(max(score, 1.0), 5.0)
+        return 10.0
+    return min(max(score, 1.0), 20.0)
 
 
 def score_feedback(model, tokenizer, record, feedback_field):
     messages = [
         {
             "role": "system",
-            "content": "You are a strict, consistent evaluator of interview coaching feedback.",
+            "content": (
+                "You are a strict JSON-only evaluator of interview coaching feedback. "
+                "Do not output analysis, reasoning, markdown, or <think> tags. "
+                "Return exactly one valid JSON object and nothing else."
+            ),
         },
         {"role": "user", "content": build_prompt(record, feedback_field)},
     ]

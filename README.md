@@ -1,4 +1,4 @@
-﻿# AI Interview Coach - Qwen2.5
+﻿# AI Interview Coach - Qwen2.5 project
 
 AI-driven interview simulation and feedback system using Qwen2.5.
 

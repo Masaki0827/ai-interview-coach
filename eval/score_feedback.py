@@ -67,12 +67,14 @@ def load_model(model_name, quantize=False):
         "dtype": compute_dtype,
         "trust_remote_code": True,
         "low_cpu_mem_usage": True,
-        "device_map": "auto",
     }
 
+    # Use a direct device map dictionary to bypass the complex accelerate BigModel 
+    # dispatch hooks that trigger the Params4bit TypeError in certain versions.
     if torch.cuda.is_available():
-        # A100 40GB usually has ~39.5GB reported. Reserve some room for activations/overhead.
-        kwargs["max_memory"] = {0: "37GiB", "cpu": "32GiB"}
+        kwargs["device_map"] = {"": 0}
+    else:
+        kwargs["device_map"] = "auto"
 
     if quantize:
         kwargs["quantization_config"] = BitsAndBytesConfig(
@@ -80,8 +82,7 @@ def load_model(model_name, quantize=False):
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
-            # Critical for when max_memory triggers offloading
-            llm_int8_enable_fp32_cpu_offload=True,
+            # Note: CPU offload removed here as it requires device_map="auto"
         )
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)

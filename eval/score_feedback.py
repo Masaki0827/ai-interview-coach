@@ -85,21 +85,21 @@ def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0
 
 
 def extract_json_object(text):
-    # 1. Strip everything before the LAST '{' and after the LAST '}' 
-    # This ignores any "Thinking Process" or draft JSONs in the text.
-    start = text.rfind('{')
-    end = text.rfind('}')
+    # Search for blocks that look like real JSON objects (contain quotes and colons)
+    # This prevents catching instructional text like "{ and end with }".
+    matches = list(re.finditer(r"\{[^{}]*\"[^{}]*:[^{}]*\}", text, flags=re.DOTALL))
     
-    if start == -1 or end == -1 or start > end:
-        # Fallback to search if rfind logic fails
-        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if not match:
+    if not matches:
+        # Fallback to the very last braces if no property pattern found
+        start = text.rfind('{')
+        end = text.rfind('}')
+        if start == -1 or end == -1 or start > end:
             raise ValueError(f"No JSON found in judge output: {text[:300]}")
-        json_str = match.group(0)
-    else:
         json_str = text[start : end + 1]
+    else:
+        # Take the LAST match (usually the final answer)
+        json_str = matches[-1].group(0)
 
-    # 2. Basic cleanup
     json_str = json_str.strip()
     
     try:
@@ -110,9 +110,9 @@ def extract_json_object(text):
         fixed = re.sub(r",\s*\}", "}", fixed)
         try:
             return json.loads(fixed)
-        except json.JSONDecodeError as e:
-            print(f"\n[!] Final JSON parse failure. Content:\n{json_str}\n")
-            raise e
+        except Exception:
+            print(f"\n[!] JSON Parse Failure. Final attempted string:\n{json_str}\n")
+            raise
 
 
 def build_prompt(record, feedback_field):

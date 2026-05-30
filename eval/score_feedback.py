@@ -65,7 +65,7 @@ def load_model(model_name, quantize=False):
     return model, tokenizer
 
 
-def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0.1, top_p=0.9):
+def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0.0, top_p=0.9):
     text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
@@ -75,8 +75,8 @@ def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0
     output_ids = model.generate(
         **inputs,
         max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_p=top_p,
+        temperature=temperature if temperature > 0 else None,
+        top_p=top_p if temperature > 0 else None,
         do_sample=temperature > 0,
         pad_token_id=tokenizer.eos_token_id,
     )

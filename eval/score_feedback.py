@@ -201,7 +201,12 @@ def score_feedback(model, tokenizer, record, feedback_field):
         {"role": "user", "content": build_prompt(record, feedback_field)},
     ]
     raw_output = generate_text(model, tokenizer, messages)
-    parsed = extract_json_object(raw_output)
+    
+    try:
+        parsed = extract_json_object(raw_output)
+    except Exception as e:
+        print(f"\n--- DEBUG: RAW LLM RESPONSE (PARSING FAILED) ---\n{raw_output}\n--- END DEBUG ---\n")
+        raise e
 
     scores = {field: normalize_score(parsed.get(field)) for field in RUBRIC_FIELDS}
     overall = parsed.get("overall_score")

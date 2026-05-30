@@ -54,7 +54,6 @@ def load_model(model_name, quantize=False):
     }
 
     if quantize:
-        # Determine compute dtype based on GPU capability
         compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
         
         kwargs["quantization_config"] = BitsAndBytesConfig(
@@ -62,9 +61,8 @@ def load_model(model_name, quantize=False):
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
-            llm_int8_enable_fp32_cpu_offload=True, # Allow offloading to CPU
+            # No CPU offload flags here; they cause errors with 4bit on certain transformer versions
         )
-        kwargs["offload_folder"] = "offload" # Directory for offloaded weights
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
     return model, tokenizer
@@ -115,7 +113,7 @@ Coach feedback:
 Score the coach feedback from 1 to 20 for each dimension:
 - technical_correctness: Is the feedback technically accurate?
 - specificity: Does it point to specific strengths, mistakes, or missing details?
-- helpfulness: Would it help the student improve?
+- helpfulness: Wood it help the student improve?
 - actionability: Does it give concrete next steps?
 - interview_coaching_quality: Does it sound like useful interview coaching instead of generic commentary?
 

@@ -72,34 +72,42 @@ def apply_mega_patch():
         print("  [+] Patched bitsandbytes Params4bit class.")
     except Exception: pass
 
-    # 3. Patch QuantState.to to handle meta-tensors (fixes NotImplementedError)
+    # 3. Patch QuantState.to to handle meta-tensors
     try:
         import bitsandbytes.functional as bnb_F
         if not hasattr(bnb_F.QuantState, "_patched_to"):
             orig_qs_to = bnb_F.QuantState.to
             def patched_qs_to(self, device):
-                # Targeted cleanup for known meta-tensor fields in bitsandbytes
-                # This avoids scanning dir() which triggers noisy warnings and slowness
                 for attr in ["code", "absmax", "offset", "nested_absmax", "nested_code", "state2"]:
                     val = getattr(self, attr, None)
                     if val is None: continue
-                    
-                    if torch.is_tensor(val):
-                        if val.device.type == "meta":
-                            # CRITICAL: Preserve SHAPE and DTYPE to avoid illegal memory access in kernels
-                            setattr(self, attr, torch.zeros(val.shape, device="cpu", dtype=val.dtype))
+                    if torch.is_tensor(val) and val.device.type == "meta":
+                        setattr(self, attr, torch.zeros(val.shape, device="cpu", dtype=val.dtype))
                     elif attr == "state2":
-                        # state2 is often another object with its own absmax/code
                         for sub_attr in ["absmax", "code", "offset", "nested_absmax", "nested_code"]:
                             sub_val = getattr(val, sub_attr, None)
                             if sub_val is not None and torch.is_tensor(sub_val) and sub_val.device.type == "meta":
-                                setattr(val, sub_attr, torch.zeros((1,), device="cpu", dtype=sub_val.dtype))
-                
+                                setattr(val, sub_attr, torch.zeros(sub_val.shape, device="cpu", dtype=sub_val.dtype))
                 return orig_qs_to(self, device)
             bnb_F.QuantState.to = patched_qs_to
             bnb_F.QuantState._patched_to = True
-            print("  [+] Patched bitsandbytes QuantState.to (dtype-aware).")
+            print("  [+] Patched bitsandbytes QuantState.to.")
     except Exception: pass
+
+    # 4. Global Tensor.to Rescue Patch
+    if not hasattr(torch.Tensor, "_orig_to"):
+        torch.Tensor._orig_to = torch.Tensor.to
+        def robust_to(self, *args, **kwargs):
+            if self.device.type == 'meta':
+                target_device = 'cpu'
+                if len(args) > 0 and isinstance(args[0], (torch.device, str)):
+                    target_device = args[0]
+                elif 'device' in kwargs:
+                    target_device = kwargs['device']
+                return torch.zeros(self.shape, dtype=self.dtype, device=target_device)
+            return self._orig_to(*args, **kwargs)
+        torch.Tensor.to = robust_to
+        print("  [+] Applied Global Tensor.to Rescue Patch.")
 
 
 def load_model(model_name, quantize=False):
@@ -118,7 +126,7 @@ def load_model(model_name, quantize=False):
     kwargs = {
         "dtype": compute_dtype,
         "trust_remote_code": True,
-        "low_cpu_mem_usage": True, # Use standard loading to let transformers handle weights
+        "low_cpu_mem_usage": True, 
         "device_map": "auto",
     }
 
@@ -147,7 +155,6 @@ def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0
     )
     inputs = tokenizer([text], return_tensors="pt").to(model.device)
     
-    # Use greedy decoding if temperature is 0
     do_sample = temperature > 0
     
     output_ids = model.generate(

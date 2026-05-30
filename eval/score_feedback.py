@@ -58,11 +58,17 @@ def load_model(model_name, quantize=False):
     compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
 
     kwargs = {
-        "dtype": compute_dtype,  # Replaces deprecated torch_dtype
-        "device_map": "auto",
+        "dtype": compute_dtype,
         "trust_remote_code": True,
-        "low_cpu_mem_usage": True,  # Critical for preventing spikes during loading
+        "low_cpu_mem_usage": True,
     }
+
+    # Use "cuda" string instead of "auto" to avoid complex accelerate dispatch hooks 
+    # that cause TypeError: Params4bit.__new__() got an unexpected keyword argument '_is_hf_initialized'
+    if torch.cuda.is_available():
+        kwargs["device_map"] = "cuda"
+    else:
+        kwargs["device_map"] = "auto"
 
     if quantize:
         kwargs["quantization_config"] = BitsAndBytesConfig(

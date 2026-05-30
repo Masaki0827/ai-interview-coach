@@ -118,7 +118,7 @@ def load_model(model_name, quantize=False):
     kwargs = {
         "dtype": compute_dtype,
         "trust_remote_code": True,
-        "low_cpu_mem_usage": False, # Use RAM to avoid meta-tensor bugs
+        "low_cpu_mem_usage": True, # Use standard loading to let transformers handle weights
         "device_map": "auto",
     }
 
@@ -139,19 +139,23 @@ def load_model(model_name, quantize=False):
     return model, tokenizer
 
 
-def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0.1, top_p=0.9):
+def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0.0, top_p=0.9):
     text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=True,
     )
     inputs = tokenizer([text], return_tensors="pt").to(model.device)
+    
+    # Use greedy decoding if temperature is 0
+    do_sample = temperature > 0
+    
     output_ids = model.generate(
         **inputs,
         max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        do_sample=temperature > 0,
+        temperature=temperature if do_sample else None,
+        top_p=top_p if do_sample else None,
+        do_sample=do_sample,
         pad_token_id=tokenizer.eos_token_id,
     )
     new_ids = output_ids[0][inputs.input_ids.shape[1] :]

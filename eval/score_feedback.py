@@ -78,16 +78,27 @@ def apply_mega_patch():
         if not hasattr(bnb_F.QuantState, "_patched_to"):
             orig_qs_to = bnb_F.QuantState.to
             def patched_qs_to(self, device):
-                # Ensure all tensors in QuantState are moved off meta device before calling original .to()
-                for attr in ["code", "absmax", "nested_absmax", "nested_code"]:
+                # Targeted cleanup for known meta-tensor fields in bitsandbytes
+                # This avoids scanning dir() which triggers noisy warnings and slowness
+                for attr in ["code", "absmax", "offset", "nested_absmax", "nested_code", "state2"]:
                     val = getattr(self, attr, None)
-                    if val is not None and torch.is_tensor(val) and val.device.type == "meta":
-                        # Replace meta tensor with a tiny dummy tensor on CPU to avoid NotImplementedError
-                        setattr(self, attr, torch.zeros((1,), device="cpu"))
+                    if val is None: continue
+                    
+                    if torch.is_tensor(val):
+                        if val.device.type == "meta":
+                            # CRITICAL: Preserve the original dtype (e.g., uint8) to avoid RuntimeError during dequantization
+                            setattr(self, attr, torch.zeros((1,), device="cpu", dtype=val.dtype))
+                    elif attr == "state2":
+                        # state2 is often another object with its own absmax/code
+                        for sub_attr in ["absmax", "code", "offset", "nested_absmax", "nested_code"]:
+                            sub_val = getattr(val, sub_attr, None)
+                            if sub_val is not None and torch.is_tensor(sub_val) and sub_val.device.type == "meta":
+                                setattr(val, sub_attr, torch.zeros((1,), device="cpu", dtype=sub_val.dtype))
+                
                 return orig_qs_to(self, device)
             bnb_F.QuantState.to = patched_qs_to
             bnb_F.QuantState._patched_to = True
-            print("  [+] Patched bitsandbytes QuantState.to (robust).")
+            print("  [+] Patched bitsandbytes QuantState.to (dtype-aware).")
     except Exception: pass
 
 
@@ -124,6 +135,7 @@ def load_model(model_name, quantize=False):
         )
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
+    print("Model loaded successfully.")
     return model, tokenizer
 
 

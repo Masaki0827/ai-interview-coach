@@ -86,8 +86,8 @@ def apply_mega_patch():
                     
                     if torch.is_tensor(val):
                         if val.device.type == "meta":
-                            # CRITICAL: Preserve the original dtype (e.g., uint8) to avoid RuntimeError during dequantization
-                            setattr(self, attr, torch.zeros((1,), device="cpu", dtype=val.dtype))
+                            # CRITICAL: Preserve SHAPE and DTYPE to avoid illegal memory access in kernels
+                            setattr(self, attr, torch.zeros(val.shape, device="cpu", dtype=val.dtype))
                     elif attr == "state2":
                         # state2 is often another object with its own absmax/code
                         for sub_attr in ["absmax", "code", "offset", "nested_absmax", "nested_code"]:

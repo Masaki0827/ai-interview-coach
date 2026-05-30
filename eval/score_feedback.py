@@ -89,18 +89,30 @@ def generate_text(model, tokenizer, messages, max_new_tokens=1024):
 
 
 def extract_json_object(text):
-    # Aggressively find the FIRST valid JSON block starting from our forced "{"
-    # This assumes the model followed the pre-fill and outputted data.
-    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if not match:
-        raise ValueError(f"No JSON object found in response: {text[:200]}")
-    
-    json_str = match.group(0).strip()
-    
+    # 1. Aggressively strip any model-specific tags that might be in the middle of the response
+    text = re.sub(r"<\/?think>", "", text, flags=re.IGNORECASE).strip()
+
+    # 2. Search for all blocks that look like JSON objects {...}
+    # Using [^{}]* inside the braces to find discrete blocks
+    matches = list(re.finditer(r"\{[^{}]*\"[^{}]*:[^{}]*\}", text, flags=re.DOTALL))
+
+    if not matches:
+        # Fallback: if discrete blocks fail, try to find the last valid-looking string between braces
+        start = text.rfind('{')
+        end = text.rfind('}')
+        if start == -1 or end == -1 or start > end:
+            raise ValueError(f"No JSON object found in response: {text[:200]}")
+        json_str = text[start : end + 1]
+    else:
+        # Take the LAST match (the official answer after any thinking/drafting)
+        json_str = matches[-1].group(0)
+
+    json_str = json_str.strip()
+
     try:
         return json.loads(json_str)
     except json.JSONDecodeError:
-        # Heuristic fix for common LLM punctuation errors
+        # Heuristic fix for single quotes and trailing commas
         fixed = json_str.replace("'", '"')
         fixed = re.sub(r",\s*\}", "}", fixed)
         try:
@@ -108,6 +120,7 @@ def extract_json_object(text):
         except Exception as e:
             print(f"\n[!] Final JSON parse failure. Content:\n{json_str}\n")
             raise e
+
 
 
 def build_prompt(record, feedback_field):

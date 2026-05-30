@@ -23,6 +23,7 @@ RUBRIC_FIELDS = [
 
 def read_jsonl(path):
     records = []
+    if not path.exists(): return []
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -38,8 +39,6 @@ def append_jsonl(record, path):
 
 
 def load_existing_ids(path):
-    if not path.exists():
-        return set()
     return {record["id"] for record in read_jsonl(path) if "id" in record}
 
 
@@ -72,12 +71,16 @@ def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0
         add_generation_prompt=True,
     )
     inputs = tokenizer([text], return_tensors="pt").to(model.device)
+    
+    # Force greedy decoding if temperature is 0
+    do_sample = temperature > 0
+    
     output_ids = model.generate(
         **inputs,
         max_new_tokens=max_new_tokens,
-        temperature=temperature if temperature > 0 else None,
-        top_p=top_p if temperature > 0 else None,
-        do_sample=temperature > 0,
+        temperature=temperature if do_sample else None,
+        top_p=top_p if do_sample else None,
+        do_sample=do_sample,
         pad_token_id=tokenizer.eos_token_id,
     )
     new_ids = output_ids[0][inputs.input_ids.shape[1] :]
@@ -85,33 +88,44 @@ def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0
 
 
 def extract_json_object(text):
-    # Search for blocks that look like real JSON objects (contain quotes and colons)
-    # This prevents catching instructional text like "{ and end with }".
-    matches = list(re.finditer(r"\{[^{}]*\"[^{}]*:[^{}]*\}", text, flags=re.DOTALL))
+    # Aggressively strip thinking tags first
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    
+    # Search for blocks that look like real JSON objects containing our specific fields.
+    # This specifically ignores instructional strings like "{ and end with }".
+    pattern = r"\{[^{}]*\"(?:technical_correctness|specificity|helpfulness)\"[^{}]*:[^{}]*\}"
+    matches = list(re.finditer(pattern, text, flags=re.DOTALL))
     
     if not matches:
-        # Fallback to the very last braces if no property pattern found
-        start = text.rfind('{')
-        end = text.rfind('}')
-        if start == -1 or end == -1 or start > end:
-            raise ValueError(f"No JSON found in judge output: {text[:300]}")
-        json_str = text[start : end + 1]
-    else:
-        # Take the LAST match (usually the final answer)
-        json_str = matches[-1].group(0)
-
-    json_str = json_str.strip()
+        # Fallback to finding the largest {...} block that is valid JSON
+        # Start searching from the end
+        potential_starts = [i for i, char in enumerate(text) if char == '{']
+        potential_ends = [i for i, char in enumerate(text) if char == '}']
+        
+        for start in reversed(potential_starts):
+            for end in reversed(potential_ends):
+                if end > start:
+                    candidate = text[start : end + 1].strip()
+                    try:
+                        return json.loads(candidate)
+                    except Exception:
+                        continue
+        
+        raise ValueError(f"Could not find any valid JSON object in model output. Raw output head: {text[:200]}")
+    
+    # Use the LAST match that contains our fields
+    json_str = matches[-1].group(0).strip()
     
     try:
         return json.loads(json_str)
     except json.JSONDecodeError:
-        # Heuristic fix for single quotes and trailing commas
+        # Final heuristic cleanup
         fixed = json_str.replace("'", '"')
         fixed = re.sub(r",\s*\}", "}", fixed)
         try:
             return json.loads(fixed)
         except Exception:
-            print(f"\n[!] JSON Parse Failure. Final attempted string:\n{json_str}\n")
+            print(f"\n[!] JSON Parse Failure. Extracted block:\n{json_str}\n")
             raise
 
 
@@ -231,16 +245,18 @@ def main():
         if not record.get(args.feedback_field):
             raise ValueError(f"Missing {args.feedback_field} for {record.get('id')}")
 
-        print(f"[{index + 1}/{len(records)}] Scoring {record.get('id')}")
+        print(f"[{index + 1}/{len(records)}] Scoring {record.get('id')}...")
         try:
             score_record = score_feedback(model, tokenizer, record, args.feedback_field)
-            score_record["judge_model"] = args.model
-            score_record["feedback_field"] = args.feedback_field
+            score_record.update({
+                "judge_model": args.model,
+                "feedback_field": args.feedback_field
+            })
             append_jsonl(score_record, args.output)
             existing_ids.add(record["id"])
             scored_count += 1
         except Exception as e:
-            print(f"  [!] Skipping {record.get('id')} due to parsing error: {e}")
+            print(f"  [!] Failed to score {record.get('id')}: {e}")
 
     print(f"Scored {scored_count} records.")
     print(f"Wrote: {args.output}")

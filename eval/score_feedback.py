@@ -2,6 +2,8 @@ import argparse
 import json
 import re
 from pathlib import Path
+import os
+import gc
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -57,22 +59,32 @@ def apply_mega_patch():
                 return self._orig_item()
             torch.Tensor.item = patched_item
             print("  [+] Patched torch.Tensor.item for meta-tensors.")
-    except Exception as e:
-        print(f"  [!] Meta-patch failed: {e}")
+    except Exception: pass
 
     # 2. Fix Params4bit unexpected keyword argument '_is_hf_initialized'
     try:
         from bitsandbytes.nn.modules import Params4bit
-        if not hasattr(Params4bit, "_patched_for_hf"):
-            orig_new = Params4bit.__new__
-            def patched_new(cls, *args, **kwargs):
-                kwargs.pop("_is_hf_initialized", None)
-                return orig_new(cls, *args, **kwargs)
-            Params4bit.__new__ = patched_new
-            Params4bit._patched_for_hf = True
-            print("  [+] Patched bitsandbytes Params4bit class.")
-    except Exception as e:
-        print(f"  [!] bitsandbytes patch failed: {e}")
+        orig_new = Params4bit.__new__
+        def patched_new(cls, *args, **kwargs):
+            kwargs.pop("_is_hf_initialized", None)
+            return orig_new(cls, *args, **kwargs)
+        Params4bit.__new__ = patched_new
+        print("  [+] Patched bitsandbytes Params4bit class.")
+    except Exception: pass
+
+    # 3. Patch QuantState.to to handle meta-tensors (fixes NotImplementedError)
+    try:
+        import bitsandbytes.functional as bnb_F
+        if not hasattr(bnb_F.QuantState, "_patched_to"):
+            orig_qs_to = bnb_F.QuantState.to
+            def patched_qs_to(self, device):
+                if getattr(self, "code", None) is not None and self.code.device.type == 'meta':
+                    self.code = torch.zeros((1,), device='cpu')
+                return orig_qs_to(self, device)
+            bnb_F.QuantState.to = patched_qs_to
+            bnb_F.QuantState._patched_to = True
+            print("  [+] Patched bitsandbytes QuantState.to.")
+    except Exception: pass
 
 
 def load_model(model_name, quantize=False):
@@ -80,9 +92,7 @@ def load_model(model_name, quantize=False):
     apply_mega_patch()
     
     # Memory management
-    import os
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    import gc
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -93,13 +103,12 @@ def load_model(model_name, quantize=False):
     kwargs = {
         "dtype": compute_dtype,
         "trust_remote_code": True,
-        "low_cpu_mem_usage": True,
+        "low_cpu_mem_usage": False, # Use RAM to avoid meta-tensor bugs
         "device_map": "auto",
     }
 
     if torch.cuda.is_available():
-        # Using more conservative GPU memory to allow for materialization spikes
-        kwargs["max_memory"] = {0: "24GiB", "cpu": "64GiB"}
+        kwargs["max_memory"] = {0: "36GiB", "cpu": "70GiB"}
 
     if quantize:
         kwargs["quantization_config"] = BitsAndBytesConfig(

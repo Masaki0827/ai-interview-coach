@@ -78,19 +78,33 @@ def apply_mega_patch():
         if not hasattr(bnb_F.QuantState, "_patched_to"):
             orig_qs_to = bnb_F.QuantState.to
             def patched_qs_to(self, device):
-                # Exhaustively move ALL meta-tensors in QuantState to CPU before calling original .to()
-                for attr in dir(self):
-                    if attr.startswith("__"): continue
-                    try:
-                        val = getattr(self, attr, None)
-                    except Exception: continue
-                    if val is not None and torch.is_tensor(val) and val.device.type == "meta":
-                        # Replace meta tensor with a tiny dummy tensor on CPU to avoid NotImplementedError
-                        setattr(self, attr, torch.zeros((1,), device="cpu"))
+                # Recursive cleanup for nested structures (like state2)
+                todo = [self]
+                visited = set()
+                while todo:
+                    curr = todo.pop()
+                    if id(curr) in visited: continue
+                    visited.add(id(curr))
+                    for attr in dir(curr):
+                        if attr.startswith("__"): continue
+                        try:
+                            val = getattr(curr, attr, None)
+                        except Exception: continue
+                        if val is not None and torch.is_tensor(val) and val.device.type == "meta":
+                            # Replace meta tensor with a tiny dummy tensor on CPU to avoid NotImplementedError
+                            setattr(curr, attr, torch.zeros((1,), device="cpu"))
+                        elif val is not None and hasattr(val, "__dict__") and id(val) not in visited:
+                            # Potential nested object
+                            todo.append(val)
+                        elif val is not None and isinstance(val, dict):
+                            # Handle dictionary attributes
+                            for k, v in val.items():
+                                if torch.is_tensor(v) and v.device.type == "meta":
+                                    val[k] = torch.zeros((1,), device="cpu")
                 return orig_qs_to(self, device)
             bnb_F.QuantState.to = patched_qs_to
             bnb_F.QuantState._patched_to = True
-            print("  [+] Patched bitsandbytes QuantState.to (exhaustive).")
+            print("  [+] Patched bitsandbytes QuantState.to (recursive).")
     except Exception: pass
 
 

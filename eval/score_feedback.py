@@ -12,7 +12,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_PATH = ROOT_DIR / "baseline" / "baseline_outputs.jsonl"
 DEFAULT_OUTPUT_PATH = ROOT_DIR / "baseline" / "baseline_scores.jsonl"
-DEFAULT_MODEL = "Qwen/Qwen3.6-35B-A3B"
+DEFAULT_MODEL = "Qwen/Qwen3.5-9B-Instruct"
 
 RUBRIC_FIELDS = [
     "technical_correctness",

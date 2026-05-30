@@ -46,20 +46,19 @@ def load_existing_ids(path):
 def load_model(model_name, quantize=False):
     print(f"Loading judge model: {model_name} (quantize={quantize})")
     
-    # 1. Runtime patch for accelerate 0.33.0 TypeError 
-    # (Unexpected keyword argument '_is_hf_initialized')
+    # 1. DEFINITIVE SINK-HOLE PATCH for bitsandbytes/accelerate compatibility bug
     try:
-        import accelerate.utils.modeling
-        if not hasattr(accelerate.utils.modeling, "_patched_for_bnb"):
-            orig_set_module_tensor_to_device = accelerate.utils.modeling.set_module_tensor_to_device
-            def patched_set_module_tensor_to_device(module, tensor_name, device, **kwargs):
+        from bitsandbytes.nn.modules import Params4bit
+        if not hasattr(Params4bit, "_patched_for_hf"):
+            orig_new = Params4bit.__new__
+            def patched_new(cls, *args, **kwargs):
                 kwargs.pop("_is_hf_initialized", None)
-                return orig_set_module_tensor_to_device(module, tensor_name, device, **kwargs)
-            accelerate.utils.modeling.set_module_tensor_to_device = patched_set_module_tensor_to_device
-            accelerate.utils.modeling._patched_for_bnb = True
-            print("Applied runtime patch for accelerate compatibility.")
+                return orig_new(cls, *args, **kwargs)
+            Params4bit.__new__ = patched_new
+            Params4bit._patched_for_hf = True
+            print("Applied robust bitsandbytes sink-hole patch.")
     except Exception as e:
-        print(f"Note: Could not apply accelerate patch ({e}).")
+        print(f"Note: Could not apply bitsandbytes patch ({e}).")
 
     # 2. Memory management
     import os
@@ -70,8 +69,6 @@ def load_model(model_name, quantize=False):
         torch.cuda.empty_cache()
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-
-    # Use bfloat16 for computation and as the base dtype to save memory
     compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
 
     kwargs = {
@@ -82,7 +79,6 @@ def load_model(model_name, quantize=False):
     }
 
     if torch.cuda.is_available():
-        # Capping GPU at 32GiB to ensure loading spikes don't cause OOM on 40GB A100
         kwargs["max_memory"] = {0: "32GiB", "cpu": "48GiB"}
 
     if quantize:

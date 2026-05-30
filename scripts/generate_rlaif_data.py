@@ -27,23 +27,32 @@ class RLAIFGenerator:
         compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
         
         kwargs = {
-            "dtype": compute_dtype,  # Replaces deprecated torch_dtype
-            "device_map": "auto",
+            "dtype": compute_dtype,
             "trust_remote_code": True,
-            "low_cpu_mem_usage": True,  # Critical for preventing spikes during loading
-            "quantization_config": BitsAndBytesConfig(
+            "low_cpu_mem_usage": True,
+        }
+
+        # Use "cuda" string instead of "auto" to avoid complex accelerate dispatch hooks
+        if torch.cuda.is_available():
+            kwargs["device_map"] = "cuda"
+            # Optional: set max_memory if you still hit OOM during materialization
+            # kwargs["max_memory"] = {0: "37GiB", "cpu": "32GiB"}
+        else:
+            kwargs["device_map"] = "auto"
+
+        if "quantize" in os.environ.get("RLAIF_FLAGS", ""):
+            kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_compute_dtype=compute_dtype,
                 bnb_4bit_use_double_quant=True,
                 llm_int8_enable_fp32_cpu_offload=True,
-            ) if "quantize" in os.environ.get("RLAIF_FLAGS", "") else None
-        }
+            )
         
         # Note: AutoModelForImageTextToText.from_pretrained handles the config
         self.model = AutoModelForImageTextToText.from_pretrained(
             model_name,
-            **{k: v for k, v in kwargs.items() if v is not None}
+            **kwargs
         )
 
     def generate(self, prompt, system_message="You are a helpful assistant.", max_tokens=512):

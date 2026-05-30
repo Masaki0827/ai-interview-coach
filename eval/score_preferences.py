@@ -37,6 +37,12 @@ def load_existing_ids(path):
 
 def load_model(model_name, quantize=False):
     print(f"Loading judge model: {model_name} (quantize={quantize})")
+    print("TIP: If you get a TypeError or OOM, restart the Colab runtime and run:")
+    print("!pip install -U transformers accelerate bitsandbytes")
+    
+    # Critical: set allocation config to avoid fragmentation
+    import os
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     
     # Clear memory from previous runs
     import gc
@@ -50,11 +56,19 @@ def load_model(model_name, quantize=False):
     compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
 
     kwargs = {
-        "dtype": compute_dtype,  # Replaces deprecated torch_dtype
-        "device_map": "auto",
+        "dtype": compute_dtype,
         "trust_remote_code": True,
-        "low_cpu_mem_usage": True,  # Critical for preventing spikes during loading
+        "low_cpu_mem_usage": True,
     }
+
+    # Use "cuda" string instead of "auto" to avoid complex accelerate dispatch hooks 
+    # that cause TypeError in certain versions.
+    if torch.cuda.is_available():
+        kwargs["device_map"] = "cuda"
+        # Optional: set max_memory if you still hit OOM during materialization
+        # kwargs["max_memory"] = {0: "37GiB", "cpu": "32GiB"}
+    else:
+        kwargs["device_map"] = "auto"
 
     if quantize:
         kwargs["quantization_config"] = BitsAndBytesConfig(
@@ -62,7 +76,6 @@ def load_model(model_name, quantize=False):
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
-            # Allows offloading non-quantized parts to CPU if GPU memory is tight
             llm_int8_enable_fp32_cpu_offload=True,
         )
 

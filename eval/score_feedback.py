@@ -85,30 +85,33 @@ def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0
 
 
 def extract_json_object(text):
-    # 1. Clean up "thinking" tags and code block markers
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-    text = re.sub(r"```json\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"```\s*", "", text)
+    # 1. Strip everything before the LAST '{' and after the LAST '}' 
+    # This ignores any "Thinking Process" or draft JSONs in the text.
+    start = text.rfind('{')
+    end = text.rfind('}')
     
-    # 2. Extract the first structure that looks like a JSON object
-    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if not match:
-        raise ValueError(f"No JSON found in judge output: {text[:300]}")
+    if start == -1 or end == -1 or start > end:
+        # Fallback to search if rfind logic fails
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if not match:
+            raise ValueError(f"No JSON found in judge output: {text[:300]}")
+        json_str = match.group(0)
+    else:
+        json_str = text[start : end + 1]
+
+    # 2. Basic cleanup
+    json_str = json_str.strip()
     
-    json_str = match.group(0).strip()
-    
-    # 3. Attempt to fix common LLM JSON errors (like single quotes or trailing commas)
     try:
         return json.loads(json_str)
     except json.JSONDecodeError:
-        # Basic heuristic fix for single quotes
-        fixed_str = json_str.replace("'", '"')
-        # Remove trailing commas before a closing brace
-        fixed_str = re.sub(r",\s*\}", "}", fixed_str)
+        # Heuristic fix for single quotes and trailing commas
+        fixed = json_str.replace("'", '"')
+        fixed = re.sub(r",\s*\}", "}", fixed)
         try:
-            return json.loads(fixed_str)
+            return json.loads(fixed)
         except json.JSONDecodeError as e:
-            print(f"\n[!] Failed to parse JSON. Raw output below:\n{text}\n")
+            print(f"\n[!] Final JSON parse failure. Content:\n{json_str}\n")
             raise e
 
 
@@ -156,14 +159,10 @@ Return only valid JSON in this exact format:
 }}
 
 Important output rules:
-- Do not write analysis or step-by-step reasoning.
-- Do not output <think> tags.
-- The first character of your response must be {{.
-- The last character of your response must be }}.
-- Return exactly one compact JSON object.
+- DO NOT output "Thinking Process" or any other text.
+- Return EXACTLY one compact JSON object.
+- The response MUST start with {{ and end with }}.
 - Keep "reason" to one concise sentence under 25 words.
-
-/no_think
 """
 
 
@@ -181,9 +180,8 @@ def score_feedback(model, tokenizer, record, feedback_field):
             "role": "system",
             "content": (
                 "You are a strict JSON-only evaluator. "
-                "Output exactly one valid JSON object. "
-                "No markdown, no talk, no reasoning. "
-                "Ensure all property names are enclosed in double quotes."
+                "Do not include thoughts, reasoning, or 'Thinking Process' in your output. "
+                "Your output must be exactly one JSON object and nothing else."
             ),
         },
         {"role": "user", "content": build_prompt(record, feedback_field)},
@@ -242,7 +240,7 @@ def main():
             existing_ids.add(record["id"])
             scored_count += 1
         except Exception as e:
-            print(f"  [!] Skipping {record.get('id')} due to error: {e}")
+            print(f"  [!] Skipping {record.get('id')} due to parsing error: {e}")
 
     print(f"Scored {scored_count} records.")
     print(f"Wrote: {args.output}")

@@ -45,6 +45,12 @@ def load_existing_ids(path):
 
 def load_model(model_name, quantize=False):
     print(f"Loading judge model: {model_name} (quantize={quantize})")
+    print("TIP: If you get a TypeError or OOM, restart the Colab runtime and run:")
+    print("!pip install -U transformers accelerate bitsandbytes")
+    
+    # Critical: set allocation config to avoid fragmentation
+    import os
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     
     # Clear memory from previous runs
     import gc
@@ -61,14 +67,12 @@ def load_model(model_name, quantize=False):
         "dtype": compute_dtype,
         "trust_remote_code": True,
         "low_cpu_mem_usage": True,
+        "device_map": "auto",
     }
 
-    # Use "cuda" string instead of "auto" to avoid complex accelerate dispatch hooks 
-    # that cause TypeError: Params4bit.__new__() got an unexpected keyword argument '_is_hf_initialized'
     if torch.cuda.is_available():
-        kwargs["device_map"] = "cuda"
-    else:
-        kwargs["device_map"] = "auto"
+        # A100 40GB usually has ~39.5GB reported. Reserve some room for activations/overhead.
+        kwargs["max_memory"] = {0: "37GiB", "cpu": "32GiB"}
 
     if quantize:
         kwargs["quantization_config"] = BitsAndBytesConfig(
@@ -76,7 +80,7 @@ def load_model(model_name, quantize=False):
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
-            # Allows offloading non-quantized parts to CPU if GPU memory is tight
+            # Critical for when max_memory triggers offloading
             llm_int8_enable_fp32_cpu_offload=True,
         )
 

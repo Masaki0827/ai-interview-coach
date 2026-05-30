@@ -78,12 +78,16 @@ def apply_mega_patch():
         if not hasattr(bnb_F.QuantState, "_patched_to"):
             orig_qs_to = bnb_F.QuantState.to
             def patched_qs_to(self, device):
-                if getattr(self, "code", None) is not None and self.code.device.type == 'meta':
-                    self.code = torch.zeros((1,), device='cpu')
+                # Ensure all tensors in QuantState are moved off meta device before calling original .to()
+                for attr in ["code", "absmax", "nested_absmax", "nested_code"]:
+                    val = getattr(self, attr, None)
+                    if val is not None and torch.is_tensor(val) and val.device.type == "meta":
+                        # Replace meta tensor with a tiny dummy tensor on CPU to avoid NotImplementedError
+                        setattr(self, attr, torch.zeros((1,), device="cpu"))
                 return orig_qs_to(self, device)
             bnb_F.QuantState.to = patched_qs_to
             bnb_F.QuantState._patched_to = True
-            print("  [+] Patched bitsandbytes QuantState.to.")
+            print("  [+] Patched bitsandbytes QuantState.to (robust).")
     except Exception: pass
 
 

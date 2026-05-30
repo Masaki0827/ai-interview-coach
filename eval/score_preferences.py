@@ -46,12 +46,17 @@ def load_model(model_name, quantize=False):
     }
 
     if quantize:
+        # Determine compute dtype based on GPU capability
+        compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
+
         kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
+            llm_int8_enable_fp32_cpu_offload=True, # Allow offloading to CPU
         )
+        kwargs["offload_folder"] = "offload" # Directory for offloaded weights
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
     return model, tokenizer

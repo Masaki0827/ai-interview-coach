@@ -1,10 +1,9 @@
-﻿import argparse
+import argparse
 import json
 import re
 from pathlib import Path
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 
@@ -36,24 +35,25 @@ def load_existing_ids(path):
     return {record["id"] for record in read_jsonl(path) if "id" in record}
 
 
-def load_model(model_name):
-    print(f"Loading judge model: {model_name}")
+def load_model(model_name, quantize=False):
+    print(f"Loading judge model: {model_name} (quantize={quantize})")
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
-    # quantization_config = BitsAndBytesConfig(
-    #     load_in_4bit=True,
-    #     bnb_4bit_quant_type="nf4",
-    #     bnb_4bit_compute_dtype=torch.bfloat16,
-    #     bnb_4bit_use_double_quant=True,
-    # )
+    kwargs = {
+        "torch_dtype": "auto",
+        "device_map": "auto",
+        "trust_remote_code": True,
+    }
 
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype="auto",
-        device_map="auto",
-        trust_remote_code=True,
-        #quantization_config=quantization_config,
-    )
+    if quantize:
+        kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
+        )
+
+    model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
     return model, tokenizer
 
 
@@ -160,6 +160,7 @@ def main():
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--quantize", action="store_true", help="Enable 4-bit quantization.")
     args = parser.parse_args()
 
     if args.overwrite and args.output.exists():
@@ -167,7 +168,7 @@ def main():
 
     records = read_jsonl(args.input)
     existing_ids = load_existing_ids(args.output)
-    model, tokenizer = load_model(args.model)
+    model, tokenizer = load_model(args.model, quantize=args.quantize)
 
     scored_count = 0
     for index, record in enumerate(records):

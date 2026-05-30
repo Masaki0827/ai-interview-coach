@@ -47,22 +47,26 @@ def load_model(model_name, quantize=False):
     print(f"Loading judge model: {model_name} (quantize={quantize})")
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
+    # Use bfloat16 to save memory during loading if supported, otherwise float16
+    compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
+
     kwargs = {
-        "torch_dtype": "auto",
+        "torch_dtype": compute_dtype,
         "device_map": "auto",
         "trust_remote_code": True,
     }
 
     if quantize:
-        compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
-        
         kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
-            # No CPU offload flags here; they cause errors with 4bit on certain transformer versions
         )
+
+    # Force everything onto the first GPU if available to avoid conservative CPU offloading by accelerate
+    if torch.cuda.is_available():
+        kwargs["device_map"] = {"": 0}
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
     return model, tokenizer

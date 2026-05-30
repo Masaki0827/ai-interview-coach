@@ -85,11 +85,31 @@ def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0
 
 
 def extract_json_object(text):
+    # 1. Clean up "thinking" tags and code block markers
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    text = re.sub(r"```json\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"```\s*", "", text)
+    
+    # 2. Extract the first structure that looks like a JSON object
     match = re.search(r"\{.*\}", text, flags=re.DOTALL)
     if not match:
-        raise ValueError(f"No JSON object found in judge output: {text[:300]}")
-    return json.loads(match.group(0))
+        raise ValueError(f"No JSON found in judge output: {text[:300]}")
+    
+    json_str = match.group(0).strip()
+    
+    # 3. Attempt to fix common LLM JSON errors (like single quotes or trailing commas)
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError:
+        # Basic heuristic fix for single quotes
+        fixed_str = json_str.replace("'", '"')
+        # Remove trailing commas before a closing brace
+        fixed_str = re.sub(r",\s*\}", "}", fixed_str)
+        try:
+            return json.loads(fixed_str)
+        except json.JSONDecodeError as e:
+            print(f"\n[!] Failed to parse JSON. Raw output below:\n{text}\n")
+            raise e
 
 
 def build_prompt(record, feedback_field):
@@ -110,7 +130,7 @@ Coach feedback:
 Score the coach feedback from 1 to 20 for each dimension:
 - technical_correctness: Is the feedback technically accurate?
 - specificity: Does it point to specific strengths, mistakes, or missing details?
-- helpfulness: Would it help the student improve?
+- helpfulness: Wood it help the student improve?
 - actionability: Does it give concrete next steps?
 - interview_coaching_quality: Does it sound like useful interview coaching instead of generic commentary?
 
@@ -160,9 +180,10 @@ def score_feedback(model, tokenizer, record, feedback_field):
         {
             "role": "system",
             "content": (
-                "You are a strict JSON-only evaluator of interview coaching feedback. "
-                "Do not output analysis, reasoning, markdown, or <think> tags. "
-                "Return exactly one valid JSON object and nothing else."
+                "You are a strict JSON-only evaluator. "
+                "Output exactly one valid JSON object. "
+                "No markdown, no talk, no reasoning. "
+                "Ensure all property names are enclosed in double quotes."
             ),
         },
         {"role": "user", "content": build_prompt(record, feedback_field)},
@@ -213,12 +234,15 @@ def main():
             raise ValueError(f"Missing {args.feedback_field} for {record.get('id')}")
 
         print(f"[{index + 1}/{len(records)}] Scoring {record.get('id')}")
-        score_record = score_feedback(model, tokenizer, record, args.feedback_field)
-        score_record["judge_model"] = args.model
-        score_record["feedback_field"] = args.feedback_field
-        append_jsonl(score_record, args.output)
-        existing_ids.add(record["id"])
-        scored_count += 1
+        try:
+            score_record = score_feedback(model, tokenizer, record, args.feedback_field)
+            score_record["judge_model"] = args.model
+            score_record["feedback_field"] = args.feedback_field
+            append_jsonl(score_record, args.output)
+            existing_ids.add(record["id"])
+            scored_count += 1
+        except Exception as e:
+            print(f"  [!] Skipping {record.get('id')} due to error: {e}")
 
     print(f"Scored {scored_count} records.")
     print(f"Wrote: {args.output}")

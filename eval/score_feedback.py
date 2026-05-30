@@ -45,14 +45,25 @@ def load_existing_ids(path):
 
 def load_model(model_name, quantize=False):
     print(f"Loading judge model: {model_name} (quantize={quantize})")
-    print("TIP: If you get a TypeError or OOM, restart the Colab runtime and run:")
-    print("!pip install -U transformers accelerate bitsandbytes")
     
-    # Critical: set allocation config to avoid fragmentation
+    # 1. Runtime patch for accelerate 0.33.0 TypeError 
+    # (Unexpected keyword argument '_is_hf_initialized')
+    try:
+        import accelerate.utils.modeling
+        if not hasattr(accelerate.utils.modeling, "_patched_for_bnb"):
+            orig_set_module_tensor_to_device = accelerate.utils.modeling.set_module_tensor_to_device
+            def patched_set_module_tensor_to_device(module, tensor_name, device, **kwargs):
+                kwargs.pop("_is_hf_initialized", None)
+                return orig_set_module_tensor_to_device(module, tensor_name, device, **kwargs)
+            accelerate.utils.modeling.set_module_tensor_to_device = patched_set_module_tensor_to_device
+            accelerate.utils.modeling._patched_for_bnb = True
+            print("Applied runtime patch for accelerate compatibility.")
+    except Exception as e:
+        print(f"Note: Could not apply accelerate patch ({e}).")
+
+    # 2. Memory management
     import os
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    
-    # Clear memory from previous runs
     import gc
     gc.collect()
     if torch.cuda.is_available():
@@ -67,14 +78,12 @@ def load_model(model_name, quantize=False):
         "dtype": compute_dtype,
         "trust_remote_code": True,
         "low_cpu_mem_usage": True,
+        "device_map": "auto",
     }
 
-    # Use a direct device map dictionary to bypass the complex accelerate BigModel 
-    # dispatch hooks that trigger the Params4bit TypeError in certain versions.
     if torch.cuda.is_available():
-        kwargs["device_map"] = {"": 0}
-    else:
-        kwargs["device_map"] = "auto"
+        # Capping GPU at 32GiB to ensure loading spikes don't cause OOM on 40GB A100
+        kwargs["max_memory"] = {0: "32GiB", "cpu": "48GiB"}
 
     if quantize:
         kwargs["quantization_config"] = BitsAndBytesConfig(
@@ -82,7 +91,7 @@ def load_model(model_name, quantize=False):
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
-            # Note: CPU offload removed here as it requires device_map="auto"
+            llm_int8_enable_fp32_cpu_offload=True,
         )
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)

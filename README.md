@@ -6,9 +6,9 @@ AI-driven interview simulation and feedback system using Qwen2.5.
 - [x] Dataset Building & Preparation
 - [x] Student Answer Generation (Test Set)
 - [x] Baseline Feedback Generation (Test Set)
-- [ ] Baseline Feedback Scoring with Qwen3.6 (Judge)
+- [x] Baseline Feedback Scoring with Qwen3.5 (Judge)
 - [x] Preference Candidate Generation (RLAIF - Training Set)
-- [ ] Preference Pair Selection with Qwen3.6 (RLAIF - Training Set)
+- [ ] Preference Pair Selection with Qwen3.5 (RLAIF - Training Set)
 - [ ] SFT & DPO Training with QLoRA (RLAIF)
 - [ ] New Model Feedback Generation & Evaluation
 - [ ] Baseline vs New Model Comparison
@@ -34,7 +34,7 @@ For each example in the fixed test set, the model generates coaching feedback ba
 - The reference answer.
 - The fixed student answer.
 
-The output is saved as baseline feedback. The baseline feedback is then scored by the judge model, `Qwen/Qwen3.6-35B-A3B`, using the same evaluation rubric that will later be used for the trained model. This creates the baseline performance score before fine-tuning.
+The output is saved as baseline feedback. The baseline feedback is then scored by the judge model, `Qwen/Qwen3.5-9B`, using the same evaluation rubric that will later be used for the trained model. This creates the baseline performance score before fine-tuning.
 
 ### 3. Student Answer Simulation Setup
 Student answers are generated before training and evaluation. They are designed to simulate a first-year CS Master's student answering software engineering interview questions.
@@ -61,7 +61,7 @@ To avoid making one side consistently better by design, the system uses randomiz
 This reduces the risk that the preference model learns superficial patterns such as always preferring `feedback_b`, longer answers, or one specific feedback style.
 
 ### 5. Judge Rubric and Preference Selection
-The judge model is `Qwen/Qwen3.6-35B-A3B`.
+The judge model is `Qwen/Qwen3.5-9B`.
 
 For baseline scoring, it evaluates each feedback response using a rubric based on:
 - Technical correctness.
@@ -90,14 +90,14 @@ Fine-tune `Qwen/Qwen2.5-3B-Instruct` using supervised fine-tuning with QLoRA.
 QLoRA is used to reduce GPU memory cost by training lightweight adapter weights instead of fully fine-tuning all model parameters. The SFT model becomes the intermediate improved model.
 
 ### 8. DPO Training with QLoRA (RLAIF)
-Use the preference pairs selected by `Qwen/Qwen3.6-35B-A3B` to train the model with Direct Preference Optimization.
+Use the preference pairs selected by `Qwen/Qwen3.5-9B` to train the model with Direct Preference Optimization.
 
 The model learns to prefer feedback that is more technically correct, specific, helpful, actionable, and suitable for interview coaching. QLoRA is again used to make training feasible with limited compute.
 
 ### 9. New Model Evaluation
 Use the trained model on the same held-out `data/test.jsonl` set used in the baseline stage. The test questions and student answers remain fixed and are not regenerated.
 
-For each test example, generate new coaching feedback using the trained model. Then use `Qwen/Qwen3.6-35B-A3B` to score the new feedback using the same rubric as the baseline evaluation.
+For each test example, generate new coaching feedback using the trained model. Then use `Qwen/Qwen3.5-9B` to score the new feedback using the same rubric as the baseline evaluation.
 
 ### 10. Baseline vs New Model Comparison
 Compare baseline scores and new model scores on the same 200 test examples.
@@ -121,7 +121,7 @@ Human evaluators compare a subset of baseline and trained model feedback. They j
 - **Base/Policy Model**: `Qwen/Qwen2.5-3B-Instruct`
   - Used for student answer simulation and generating coach feedback candidates.
   - This is the model that will be fine-tuned.
-- **Judge Model**: `Qwen/Qwen3.6-35B-A3B`
+- **Judge Model**: `Qwen/Qwen3.5-9B`
   - Used for feedback scoring and preference selection (RLAIF).
 
 ## Methodology Details
@@ -188,7 +188,7 @@ Scored by the judge model on a 1-20 scale.
   "interview_coaching_quality": 15,
   "overall_score": 15.0,
   "reason": "Concise and technically accurate with clear improvement steps.",
-  "judge_model": "Qwen/Qwen3.6-35B-A3B",
+  "judge_model": "Qwen/Qwen3.5-9B",
   "feedback_field": "baseline_feedback"
 }
 ```

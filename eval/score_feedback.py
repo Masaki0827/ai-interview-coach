@@ -2,17 +2,16 @@ import argparse
 import json
 import re
 from pathlib import Path
-import os
-import gc
 
 import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_PATH = ROOT_DIR / "baseline" / "baseline_outputs.jsonl"
 DEFAULT_OUTPUT_PATH = ROOT_DIR / "baseline" / "baseline_scores.jsonl"
-DEFAULT_MODEL = "Qwen/Qwen3.5-9B-Instruct"
+DEFAULT_MODEL = "Qwen/Qwen3.6-35B-A3B"
 
 RUBRIC_FIELDS = [
     "technical_correctness",
@@ -45,138 +44,40 @@ def load_existing_ids(path):
     return {record["id"] for record in read_jsonl(path) if "id" in record}
 
 
-def apply_mega_patch():
-    """Definitively fix bitsandbytes/accelerate/meta-tensor compatibility bugs."""
-    print("Applying Mega-Patch for library compatibility...")
-    
-    # 1. Fix Tensor.item() crash on meta tensors
-    try:
-        if not hasattr(torch.Tensor, "_orig_item"):
-            torch.Tensor._orig_item = torch.Tensor.item
-            def patched_item(self):
-                if self.device.type == 'meta':
-                    return 0
-                return self._orig_item()
-            torch.Tensor.item = patched_item
-            print("  [+] Patched torch.Tensor.item for meta-tensors.")
-    except Exception: pass
-
-    # 2. Fix Params4bit unexpected keyword argument '_is_hf_initialized'
-    try:
-        from bitsandbytes.nn.modules import Params4bit
-        orig_new = Params4bit.__new__
-        def patched_new(cls, *args, **kwargs):
-            kwargs.pop("_is_hf_initialized", None)
-            return orig_new(cls, *args, **kwargs)
-        Params4bit.__new__ = patched_new
-        print("  [+] Patched bitsandbytes Params4bit class.")
-    except Exception: pass
-
-    # 3. Patch QuantState.to to handle meta-tensors
-    try:
-        import bitsandbytes.functional as bnb_F
-        if not hasattr(bnb_F.QuantState, "_patched_to"):
-            orig_qs_to = bnb_F.QuantState.to
-            def patched_qs_to(self, device):
-                for attr in ["code", "absmax", "offset", "nested_absmax", "nested_code", "state2"]:
-                    val = getattr(self, attr, None)
-                    if val is None: continue
-                    if torch.is_tensor(val) and val.device.type == "meta":
-                        setattr(self, attr, torch.zeros(val.shape, device="cpu", dtype=val.dtype))
-                    elif attr == "state2":
-                        for sub_attr in ["absmax", "code", "offset", "nested_absmax", "nested_code"]:
-                            sub_val = getattr(val, sub_attr, None)
-                            if sub_val is not None and torch.is_tensor(sub_val) and sub_val.device.type == "meta":
-                                setattr(val, sub_attr, torch.zeros(sub_val.shape, device="cpu", dtype=sub_val.dtype))
-                return orig_qs_to(self, device)
-            bnb_F.QuantState.to = patched_qs_to
-            bnb_F.QuantState._patched_to = True
-            print("  [+] Patched bitsandbytes QuantState.to.")
-    except Exception: pass
-
-    # 4. Global Tensor.to Rescue Patch
-    if not hasattr(torch.Tensor, "_orig_to"):
-        torch.Tensor._orig_to = torch.Tensor.to
-        def robust_to(self, *args, **kwargs):
-            if self.device.type == 'meta':
-                target_device = 'cpu'
-                if len(args) > 0 and isinstance(args[0], (torch.device, str)):
-                    target_device = args[0]
-                elif 'device' in kwargs:
-                    target_device = kwargs['device']
-                return torch.zeros(self.shape, dtype=self.dtype, device=target_device)
-            return self._orig_to(*args, **kwargs)
-        torch.Tensor.to = robust_to
-        print("  [+] Applied Global Tensor.to Rescue Patch.")
-
-    # 5. Initialization Patches: Prevent "Attempting to copy from device cpu to device meta"
-    for func_name in ["normal_", "uniform_", "zero_", "fill_"]:
-        if not hasattr(torch.Tensor, f"_orig_{func_name}"):
-            orig_func = getattr(torch.Tensor, func_name)
-            setattr(torch.Tensor, f"_orig_{func_name}", orig_func)
-            def make_robust_init(old_f):
-                def robust_init(self, *args, **kwargs):
-                    if self.device.type == 'meta':
-                        return self # Skip initialization for meta tensors
-                    return old_f(self, *args, **kwargs)
-                return robust_init
-            setattr(torch.Tensor, func_name, make_robust_init(orig_func))
-    print("  [+] Applied Global Initialization Rescue Patches.")
-
-
-def load_model(model_name, quantize=False):
-    print(f"Loading judge model: {model_name} (quantize={quantize})")
-    apply_mega_patch()
-    
-    # Memory management
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
+def load_model(model_name):
+    print(f"Loading judge model: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
 
-    kwargs = {
-        "dtype": compute_dtype,
-        "trust_remote_code": True,
-        "low_cpu_mem_usage": True, 
-        "device_map": "auto",
-    }
+    # quantization_config = BitsAndBytesConfig(
+    #     load_in_4bit=True,
+    #     bnb_4bit_quant_type="nf4",
+    #     bnb_4bit_compute_dtype=torch.bfloat16,
+    #     bnb_4bit_use_double_quant=True,
+    # )
 
-    if torch.cuda.is_available():
-        kwargs["max_memory"] = {0: "36GiB", "cpu": "70GiB"}
-
-    if quantize:
-        kwargs["quantization_config"] = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=compute_dtype,
-            bnb_4bit_use_double_quant=True,
-            llm_int8_enable_fp32_cpu_offload=True,
-        )
-
-    model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
-    print("Model loaded successfully.")
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype="auto",
+        device_map="auto",
+        trust_remote_code=True,
+        #quantization_config=quantization_config,
+    )
     return model, tokenizer
 
 
-def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0.0, top_p=0.9):
+def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0.1, top_p=0.9):
     text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=True,
     )
     inputs = tokenizer([text], return_tensors="pt").to(model.device)
-    
-    do_sample = temperature > 0
-    
     output_ids = model.generate(
         **inputs,
         max_new_tokens=max_new_tokens,
-        temperature=temperature if do_sample else None,
-        top_p=top_p if do_sample else None,
-        do_sample=do_sample,
+        temperature=temperature,
+        top_p=top_p,
+        do_sample=temperature > 0,
         pad_token_id=tokenizer.eos_token_id,
     )
     new_ids = output_ids[0][inputs.input_ids.shape[1] :]
@@ -209,7 +110,7 @@ Coach feedback:
 Score the coach feedback from 1 to 20 for each dimension:
 - technical_correctness: Is the feedback technically accurate?
 - specificity: Does it point to specific strengths, mistakes, or missing details?
-- helpfulness: Wood it help the student improve?
+- helpfulness: Would it help the student improve?
 - actionability: Does it give concrete next steps?
 - interview_coaching_quality: Does it sound like useful interview coaching instead of generic commentary?
 
@@ -292,7 +193,6 @@ def main():
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
-    parser.add_argument("--quantize", action="store_true", help="Enable 4-bit quantization.")
     args = parser.parse_args()
 
     if args.overwrite and args.output.exists():
@@ -300,7 +200,7 @@ def main():
 
     records = read_jsonl(args.input)
     existing_ids = load_existing_ids(args.output)
-    model, tokenizer = load_model(args.model, quantize=args.quantize)
+    model, tokenizer = load_model(args.model)
 
     scored_count = 0
     for index, record in enumerate(records):

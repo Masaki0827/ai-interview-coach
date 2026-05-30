@@ -109,6 +109,20 @@ def apply_mega_patch():
         torch.Tensor.to = robust_to
         print("  [+] Applied Global Tensor.to Rescue Patch.")
 
+    # 5. Initialization Patches: Prevent "Attempting to copy from device cpu to device meta"
+    for func_name in ["normal_", "uniform_", "zero_", "fill_"]:
+        if not hasattr(torch.Tensor, f"_orig_{func_name}"):
+            orig_func = getattr(torch.Tensor, func_name)
+            setattr(torch.Tensor, f"_orig_{func_name}", orig_func)
+            def make_robust_init(old_f):
+                def robust_init(self, *args, **kwargs):
+                    if self.device.type == 'meta':
+                        return self # Skip initialization for meta tensors
+                    return old_f(self, *args, **kwargs)
+                return robust_init
+            setattr(torch.Tensor, func_name, make_robust_init(orig_func))
+    print("  [+] Applied Global Initialization Rescue Patches.")
+
 
 def load_model(model_name, quantize=False):
     print(f"Loading judge model: {model_name} (quantize={quantize})")

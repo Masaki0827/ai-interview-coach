@@ -64,69 +64,50 @@ def load_model(model_name, quantize=False):
     return model, tokenizer
 
 
-def generate_text(model, tokenizer, messages, max_new_tokens=4096, temperature=0.0, top_p=0.9):
-    text = tokenizer.apply_chat_template(
+def generate_text(model, tokenizer, messages, max_new_tokens=1024):
+    """Uses assistant pre-filling to skip thinking process and force JSON output."""
+    prompt = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=True,
     )
-    inputs = tokenizer([text], return_tensors="pt").to(model.device)
+    # FORCE PRE-FILL: Append the start of a JSON object
+    prompt += "{"
     
-    # Force greedy decoding if temperature is 0
-    do_sample = temperature > 0
+    inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
     
     output_ids = model.generate(
         **inputs,
         max_new_tokens=max_new_tokens,
-        temperature=temperature if do_sample else None,
-        top_p=top_p if do_sample else None,
-        do_sample=do_sample,
+        do_sample=False, # Greedy decoding
         pad_token_id=tokenizer.eos_token_id,
     )
+    
     new_ids = output_ids[0][inputs.input_ids.shape[1] :]
-    return tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+    # Prepend the forced "{" back to the result
+    return "{" + tokenizer.decode(new_ids, skip_special_tokens=True).strip()
 
 
 def extract_json_object(text):
-    # Aggressively strip thinking tags first
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    # Aggressively find the FIRST valid JSON block starting from our forced "{"
+    # This assumes the model followed the pre-fill and outputted data.
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if not match:
+        raise ValueError(f"No JSON object found in response: {text[:200]}")
     
-    # Search for blocks that look like real JSON objects containing our specific fields.
-    # This specifically ignores instructional strings like "{ and end with }".
-    pattern = r"\{[^{}]*\"(?:technical_correctness|specificity|helpfulness)\"[^{}]*:[^{}]*\}"
-    matches = list(re.finditer(pattern, text, flags=re.DOTALL))
-    
-    if not matches:
-        # Fallback to finding the largest {...} block that is valid JSON
-        # Start searching from the end
-        potential_starts = [i for i, char in enumerate(text) if char == '{']
-        potential_ends = [i for i, char in enumerate(text) if char == '}']
-        
-        for start in reversed(potential_starts):
-            for end in reversed(potential_ends):
-                if end > start:
-                    candidate = text[start : end + 1].strip()
-                    try:
-                        return json.loads(candidate)
-                    except Exception:
-                        continue
-        
-        raise ValueError(f"Could not find any valid JSON object in model output. Raw output head: {text[:200]}")
-    
-    # Use the LAST match that contains our fields
-    json_str = matches[-1].group(0).strip()
+    json_str = match.group(0).strip()
     
     try:
         return json.loads(json_str)
     except json.JSONDecodeError:
-        # Final heuristic cleanup
+        # Heuristic fix for common LLM punctuation errors
         fixed = json_str.replace("'", '"')
         fixed = re.sub(r",\s*\}", "}", fixed)
         try:
             return json.loads(fixed)
-        except Exception:
-            print(f"\n[!] JSON Parse Failure. Extracted block:\n{json_str}\n")
-            raise
+        except Exception as e:
+            print(f"\n[!] Final JSON parse failure. Content:\n{json_str}\n")
+            raise e
 
 
 def build_prompt(record, feedback_field):
@@ -171,12 +152,6 @@ Return only valid JSON in this exact format:
   "overall_score": 1.0,
   "reason": "..."
 }}
-
-Important output rules:
-- DO NOT output "Thinking Process" or any other text.
-- Return EXACTLY one compact JSON object.
-- The response MUST start with {{ and end with }}.
-- Keep "reason" to one concise sentence under 25 words.
 """
 
 
@@ -192,11 +167,7 @@ def score_feedback(model, tokenizer, record, feedback_field):
     messages = [
         {
             "role": "system",
-            "content": (
-                "You are a strict JSON-only evaluator. "
-                "Do not include thoughts, reasoning, or 'Thinking Process' in your output. "
-                "Your output must be exactly one JSON object and nothing else."
-            ),
+            "content": "You are a strict JSON-only evaluator. No thoughts, no reasoning, just output the JSON object.",
         },
         {"role": "user", "content": build_prompt(record, feedback_field)},
     ]
@@ -253,10 +224,8 @@ def main():
         print(f"[{index + 1}/{len(records)}] Scoring {record.get('id')}...")
         try:
             score_record = score_feedback(model, tokenizer, record, args.feedback_field)
-            score_record.update({
-                "judge_model": args.model,
-                "feedback_field": args.feedback_field
-            })
+            score_record["judge_model"] = args.model
+            score_record["feedback_field"] = args.feedback_field
             append_jsonl(score_record, args.output)
             existing_ids.add(record["id"])
             scored_count += 1

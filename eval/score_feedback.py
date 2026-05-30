@@ -86,18 +86,19 @@ def apply_mega_patch():
                     
                     if torch.is_tensor(val):
                         if val.device.type == "meta":
-                            setattr(self, attr, torch.zeros((1,), device="cpu"))
+                            # CRITICAL: Preserve the original dtype (e.g., uint8) to avoid RuntimeError during dequantization
+                            setattr(self, attr, torch.zeros((1,), device="cpu", dtype=val.dtype))
                     elif attr == "state2":
                         # state2 is often another object with its own absmax/code
                         for sub_attr in ["absmax", "code", "offset", "nested_absmax", "nested_code"]:
                             sub_val = getattr(val, sub_attr, None)
                             if sub_val is not None and torch.is_tensor(sub_val) and sub_val.device.type == "meta":
-                                setattr(val, sub_attr, torch.zeros((1,), device="cpu"))
+                                setattr(val, sub_attr, torch.zeros((1,), device="cpu", dtype=sub_val.dtype))
                 
                 return orig_qs_to(self, device)
             bnb_F.QuantState.to = patched_qs_to
             bnb_F.QuantState._patched_to = True
-            print("  [+] Patched bitsandbytes QuantState.to (targeted).")
+            print("  [+] Patched bitsandbytes QuantState.to (dtype-aware).")
     except Exception: pass
 
 

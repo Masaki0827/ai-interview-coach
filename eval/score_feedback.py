@@ -43,10 +43,24 @@ def load_existing_ids(path):
     return {record["id"] for record in read_jsonl(path) if "id" in record}
 
 
-def load_model(model_name, quantize=False):
-    print(f"Loading judge model: {model_name} (quantize={quantize})")
+def apply_mega_patch():
+    """Definitively fix bitsandbytes/accelerate/meta-tensor compatibility bugs."""
+    print("Applying Mega-Patch for library compatibility...")
     
-    # 1. DEFINITIVE SINK-HOLE PATCH for bitsandbytes/accelerate compatibility bug
+    # 1. Fix Tensor.item() crash on meta tensors
+    try:
+        if not hasattr(torch.Tensor, "_orig_item"):
+            torch.Tensor._orig_item = torch.Tensor.item
+            def patched_item(self):
+                if self.device.type == 'meta':
+                    return 0
+                return self._orig_item()
+            torch.Tensor.item = patched_item
+            print("  [+] Patched torch.Tensor.item for meta-tensors.")
+    except Exception as e:
+        print(f"  [!] Meta-patch failed: {e}")
+
+    # 2. Fix Params4bit unexpected keyword argument '_is_hf_initialized'
     try:
         from bitsandbytes.nn.modules import Params4bit
         if not hasattr(Params4bit, "_patched_for_hf"):
@@ -56,11 +70,16 @@ def load_model(model_name, quantize=False):
                 return orig_new(cls, *args, **kwargs)
             Params4bit.__new__ = patched_new
             Params4bit._patched_for_hf = True
-            print("Applied robust bitsandbytes sink-hole patch.")
+            print("  [+] Patched bitsandbytes Params4bit class.")
     except Exception as e:
-        print(f"Note: Could not apply bitsandbytes patch ({e}).")
+        print(f"  [!] bitsandbytes patch failed: {e}")
 
-    # 2. Memory management
+
+def load_model(model_name, quantize=False):
+    print(f"Loading judge model: {model_name} (quantize={quantize})")
+    apply_mega_patch()
+    
+    # Memory management
     import os
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     import gc
@@ -79,7 +98,8 @@ def load_model(model_name, quantize=False):
     }
 
     if torch.cuda.is_available():
-        kwargs["max_memory"] = {0: "32GiB", "cpu": "48GiB"}
+        # Using more conservative GPU memory to allow for materialization spikes
+        kwargs["max_memory"] = {0: "24GiB", "cpu": "64GiB"}
 
     if quantize:
         kwargs["quantization_config"] = BitsAndBytesConfig(

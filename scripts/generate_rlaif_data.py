@@ -1,7 +1,7 @@
 import json
 import torch
 import gc
-from transformers import AutoModelForImageTextToText, AutoProcessor
+from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
 from tqdm import tqdm
 import os
 import re
@@ -15,24 +15,35 @@ MODEL_NAME = "Qwen/Qwen3.6-35B-A3B"
 class RLAIFGenerator:
     def __init__(self, model_name=MODEL_NAME):
         print(f"Loading model for RLAIF data generation: {model_name}...")
+        
+        # Clear memory from previous runs
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         self.processor = AutoProcessor.from_pretrained(model_name)
         
-        # Use bfloat16 to save memory during loading if supported, otherwise float16
+        # Use bfloat16 for computation and as the base dtype to save memory
         compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
         
         kwargs = {
-            "torch_dtype": compute_dtype,
+            "dtype": compute_dtype,  # Replaces deprecated torch_dtype
             "device_map": "auto",
             "trust_remote_code": True,
+            "low_cpu_mem_usage": True,  # Critical for preventing spikes during loading
+            "quantization_config": BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=compute_dtype,
+                bnb_4bit_use_double_quant=True,
+                llm_int8_enable_fp32_cpu_offload=True,
+            ) if "quantize" in os.environ.get("RLAIF_FLAGS", "") else None
         }
         
-        # Force everything onto the first GPU if available
-        if torch.cuda.is_available():
-            kwargs["device_map"] = {"": 0}
-            
+        # Note: AutoModelForImageTextToText.from_pretrained handles the config
         self.model = AutoModelForImageTextToText.from_pretrained(
             model_name,
-            **kwargs
+            **{k: v for k, v in kwargs.items() if v is not None}
         )
 
     def generate(self, prompt, system_message="You are a helpful assistant.", max_tokens=512):

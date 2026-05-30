@@ -45,15 +45,23 @@ def load_existing_ids(path):
 
 def load_model(model_name, quantize=False):
     print(f"Loading judge model: {model_name} (quantize={quantize})")
+    
+    # Clear memory from previous runs
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
-    # Use bfloat16 to save memory during loading if supported, otherwise float16
+    # Use bfloat16 for computation and as the base dtype to save memory
     compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
 
     kwargs = {
-        "torch_dtype": compute_dtype,
+        "dtype": compute_dtype,  # Replaces deprecated torch_dtype
         "device_map": "auto",
         "trust_remote_code": True,
+        "low_cpu_mem_usage": True,  # Critical for preventing spikes during loading
     }
 
     if quantize:
@@ -62,11 +70,9 @@ def load_model(model_name, quantize=False):
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
+            # Allows offloading non-quantized parts to CPU if GPU memory is tight
+            llm_int8_enable_fp32_cpu_offload=True,
         )
-
-    # Force everything onto the first GPU if available to avoid conservative CPU offloading by accelerate
-    if torch.cuda.is_available():
-        kwargs["device_map"] = {"": 0}
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
     return model, tokenizer

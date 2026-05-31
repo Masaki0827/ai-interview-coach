@@ -11,6 +11,8 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_PATH = ROOT_DIR / "train" / "preference_candidates.jsonl"
 DEFAULT_OUTPUT_PATH = ROOT_DIR / "train" / "preference_pairs.jsonl"
 DEFAULT_MODEL = "Qwen/Qwen3.5-9B"
+MAX_JUDGE_RETRIES = 3
+INVALID_REASONS = {"", "...", "n/a", "none", "unknown", "same"}
 
 
 def read_jsonl(path):
@@ -140,10 +142,15 @@ A shorter answer can be better if it is more precise and useful.
 A longer answer can be worse if it is generic, repetitive, or unfocused.
 Judge the substance of the feedback, not whether it matches a particular style label.
 
-Return only valid JSON in this exact format:
+Return only valid JSON.
+The "reason" value must be a real explanation comparing Feedback A and Feedback B.
+Do not use "...", "N/A", "none", "unknown", or placeholder text.
+The reason must mention at least one concrete quality difference between the two feedback options.
+
+Return JSON in this exact schema:
 {{
   "winner": "a",
-  "reason": "Briefly explain the main quality difference in 1-3 sentences."
+  "reason": "A real 1-3 sentence explanation comparing the two feedback options."
 }}
 """
 
@@ -156,14 +163,23 @@ def choose_feedback(model, tokenizer, record, feedback_a_field, feedback_b_field
         },
         {"role": "user", "content": build_prompt(record, feedback_a_field, feedback_b_field)},
     ]
-    raw_output = generate_text(model, tokenizer, messages)
-    parsed = extract_json_object(raw_output)
-    winner = str(parsed.get("winner", "")).strip().lower()
-    if winner not in {"a", "b"}:
-        raise ValueError(f"Invalid winner from judge: {winner}")
-    reason = str(parsed.get("reason", "")).strip()
-    if reason in {"", "..."}:
-        raise ValueError(f"Invalid or placeholder reason from judge: {reason}")
+    last_error = None
+    for attempt in range(1, MAX_JUDGE_RETRIES + 1):
+        raw_output = generate_text(model, tokenizer, messages)
+        try:
+            parsed = extract_json_object(raw_output)
+            winner = str(parsed.get("winner", "")).strip().lower()
+            if winner not in {"a", "b"}:
+                raise ValueError(f"Invalid winner from judge: {winner}")
+            reason = str(parsed.get("reason", "")).strip()
+            if reason.lower() in INVALID_REASONS:
+                raise ValueError(f"Invalid or placeholder reason from judge: {reason}")
+            break
+        except Exception as error:
+            last_error = error
+            print(f"  [retry {attempt}/{MAX_JUDGE_RETRIES}] Invalid judge output: {error}")
+    else:
+        raise ValueError(f"Judge failed after {MAX_JUDGE_RETRIES} attempts: {last_error}")
 
     chosen_field = feedback_a_field if winner == "a" else feedback_b_field
     rejected_field = feedback_b_field if winner == "a" else feedback_a_field

@@ -104,10 +104,15 @@ def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0
 
 def extract_json_object(text):
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if not match:
-        raise ValueError(f"No JSON object found in judge output: {text[:300]}")
-    return json.loads(match.group(0))
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", text):
+        try:
+            parsed, _ = decoder.raw_decode(text[match.start() :])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError(f"No valid JSON object found in judge output: {text[:300]}")
 
 
 def build_prompt(record, feedback_a_field, feedback_b_field):

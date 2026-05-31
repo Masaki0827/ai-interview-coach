@@ -15,7 +15,7 @@ DEFAULT_MODEL = "Qwen/Qwen3.5-9B"
 
 def read_jsonl(path):
     records = []
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8-sig") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -138,7 +138,7 @@ Judge the substance of the feedback, not whether it matches a particular style l
 Return only valid JSON in this exact format:
 {{
   "winner": "a",
-  "reason": "..."
+  "reason": "Briefly explain the main quality difference in 1-3 sentences."
 }}
 """
 
@@ -156,6 +156,9 @@ def choose_feedback(model, tokenizer, record, feedback_a_field, feedback_b_field
     winner = str(parsed.get("winner", "")).strip().lower()
     if winner not in {"a", "b"}:
         raise ValueError(f"Invalid winner from judge: {winner}")
+    reason = str(parsed.get("reason", "")).strip()
+    if reason in {"", "..."}:
+        raise ValueError(f"Invalid or placeholder reason from judge: {reason}")
 
     chosen_field = feedback_a_field if winner == "a" else feedback_b_field
     rejected_field = feedback_b_field if winner == "a" else feedback_a_field
@@ -173,7 +176,7 @@ def choose_feedback(model, tokenizer, record, feedback_a_field, feedback_b_field
         "feedback_a_temperature": record.get("feedback_a_temperature", ""),
         "feedback_b_temperature": record.get("feedback_b_temperature", ""),
         "winner": winner,
-        "reason": str(parsed.get("reason", "")).strip(),
+        "reason": reason,
     }
 
 

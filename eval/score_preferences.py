@@ -127,7 +127,7 @@ def normalize_score(value):
         score = float(value)
     except (TypeError, ValueError):
         raise ValueError(f"Invalid score value: {value}")
-    return min(max(score, 1.0), 10.0)
+    return min(max(score, 1.0), 20.0)
 
 
 def build_prompt(record, display_a_field, display_b_field):
@@ -148,7 +148,7 @@ Feedback A:
 Feedback B:
 {record.get(display_b_field, "")}
 
-Score each feedback from 1 to 10 based on:
+Score each feedback from 1 to 20 based on:
 - Technical correctness.
 - Specificity to the student's answer.
 - Helpfulness for improving the interview answer.
@@ -160,7 +160,7 @@ Important:
 - Do not prefer a response because of its position, length, formatting, or tone alone.
 - A shorter response can score higher if it is more precise and useful.
 - A longer response can score lower if it is generic, repetitive, or technically weak.
-- Use the full 1-10 range when quality differs.
+- Use the full 1-20 range when quality differs.
 
 Return only valid JSON in this exact schema:
 {{

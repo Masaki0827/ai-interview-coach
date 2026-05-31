@@ -10,7 +10,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_PATH = ROOT_DIR / "train" / "preference_candidates.jsonl"
 DEFAULT_OUTPUT_PATH = ROOT_DIR / "train" / "preference_pairs.jsonl"
-DEFAULT_MODEL = "Qwen/Qwen3.6-35B-A3B"
+DEFAULT_MODEL = "Qwen/Qwen3.5-9B"
 
 
 def read_jsonl(path):

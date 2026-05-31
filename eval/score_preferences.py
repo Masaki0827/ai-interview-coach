@@ -1,5 +1,7 @@
 import argparse
+import gc
 import json
+import os
 import re
 from pathlib import Path
 
@@ -37,22 +39,15 @@ def load_existing_ids(path):
 
 def load_model(model_name, quantize=False):
     print(f"Loading judge model: {model_name} (quantize={quantize})")
-    print("TIP: If you get a TypeError or OOM, restart the Colab runtime and run:")
-    print("!pip install -U transformers accelerate bitsandbytes")
-    
-    # Critical: set allocation config to avoid fragmentation
-    import os
+
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    
-    # Clear memory from previous runs
-    import gc
+
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
-    # Use bfloat16 for computation and as the base dtype to save memory
     compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
 
     kwargs = {
@@ -61,12 +56,8 @@ def load_model(model_name, quantize=False):
         "low_cpu_mem_usage": True,
     }
 
-    # Use "cuda" string instead of "auto" to avoid complex accelerate dispatch hooks 
-    # that cause TypeError in certain versions.
     if torch.cuda.is_available():
         kwargs["device_map"] = "cuda"
-        # Optional: set max_memory if you still hit OOM during materialization
-        # kwargs["max_memory"] = {0: "37GiB", "cpu": "32GiB"}
     else:
         kwargs["device_map"] = "auto"
 
@@ -76,7 +67,6 @@ def load_model(model_name, quantize=False):
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
-            llm_int8_enable_fp32_cpu_offload=True,
         )
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
@@ -238,7 +228,7 @@ def choose_feedback(model, tokenizer, record, feedback_a_field, feedback_b_field
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Choose preferred feedback with a judge model.")
+    parser = argparse.ArgumentParser(description="Score feedback candidates with two-pass swapped-order judging.")
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument("--feedback-a-field", default="feedback_a")

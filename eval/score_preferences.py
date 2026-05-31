@@ -11,7 +11,6 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_PATH = ROOT_DIR / "train" / "preference_candidates.jsonl"
 DEFAULT_OUTPUT_PATH = ROOT_DIR / "train" / "preference_pairs.jsonl"
 DEFAULT_MODEL = "Qwen/Qwen3.5-9B"
-INVALID_REASONS = {"", "...", "n/a", "none", "unknown", "same"}
 
 
 def read_jsonl(path):
@@ -84,23 +83,30 @@ def load_model(model_name, quantize=False):
     return model, tokenizer
 
 
-def generate_text(model, tokenizer, messages, max_new_tokens=2048, temperature=0.1, top_p=0.9):
-    text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
-    )
+def generate_text(model, tokenizer, messages, max_new_tokens=256):
+    try:
+        text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+    except TypeError:
+        text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+    text += "{"
     inputs = tokenizer([text], return_tensors="pt").to(model.device)
     output_ids = model.generate(
         **inputs,
         max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        do_sample=temperature > 0,
+        do_sample=False,
         pad_token_id=tokenizer.eos_token_id,
     )
     new_ids = output_ids[0][inputs.input_ids.shape[1] :]
-    return tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+    return "{" + tokenizer.decode(new_ids, skip_special_tokens=True).strip()
 
 
 def extract_json_object(text):
@@ -116,8 +122,16 @@ def extract_json_object(text):
     raise ValueError(f"No valid JSON object found in judge output: {text[:300]}")
 
 
-def build_prompt(record, feedback_a_field, feedback_b_field):
-    return f"""Choose the better coach feedback for a software engineering interview answer.
+def normalize_score(value):
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid score value: {value}")
+    return min(max(score, 1.0), 10.0)
+
+
+def build_prompt(record, display_a_field, display_b_field):
+    return f"""Score two coach feedback responses for a software engineering interview answer.
 
 Question:
 {record.get("question", "")}
@@ -129,44 +143,76 @@ Student answer:
 {record.get("student_answer", "")}
 
 Feedback A:
-{record.get(feedback_a_field, "")}
+{record.get(display_a_field, "")}
 
 Feedback B:
-{record.get(feedback_b_field, "")}
+{record.get(display_b_field, "")}
 
-Select the feedback that is more technically correct, specific, helpful, actionable, and suitable for interview coaching.
-If both are imperfect, choose the one that would better help the student improve.
-Do not prefer A or B because of position, length, formatting, or tone alone.
-A shorter answer can be better if it is more precise and useful.
-A longer answer can be worse if it is generic, repetitive, or unfocused.
-Judge the substance of the feedback, not whether it matches a particular style label.
+Score each feedback from 1 to 10 based on:
+- Technical correctness.
+- Specificity to the student's answer.
+- Helpfulness for improving the interview answer.
+- Concrete, actionable advice.
+- Direct usefulness as interview coaching.
+
+Important:
+- Score Feedback A and Feedback B independently.
+- Do not prefer a response because of its position, length, formatting, or tone alone.
+- A shorter response can score higher if it is more precise and useful.
+- A longer response can score lower if it is generic, repetitive, or technically weak.
+- Use the full 1-10 range when quality differs.
 
 Return only valid JSON in this exact schema:
 {{
-  "winner": "a"
+  "score_a": 1,
+  "score_b": 1
 }}
 """
 
 
-def choose_feedback(model, tokenizer, record, feedback_a_field, feedback_b_field):
+def score_display_order(model, tokenizer, record, display_a_field, display_b_field):
     messages = [
         {
             "role": "system",
-            "content": "You are a strict, consistent evaluator of interview coaching feedback preferences.",
+            "content": (
+                "You are a strict, consistent evaluator of interview coaching feedback. "
+                "Return only JSON with numeric scores."
+            ),
         },
-        {"role": "user", "content": build_prompt(record, feedback_a_field, feedback_b_field)},
+        {"role": "user", "content": build_prompt(record, display_a_field, display_b_field)},
     ]
     raw_output = generate_text(model, tokenizer, messages)
     parsed = extract_json_object(raw_output)
-    winner = str(parsed.get("winner", "")).strip().lower()
-    if winner not in {"a", "b"}:
-        raise ValueError(f"Invalid winner from judge: {winner}")
-    reason = str(parsed.get("reason", "")).strip()
-    if reason.lower() in INVALID_REASONS:
-        reason = ""
+    return normalize_score(parsed.get("score_a")), normalize_score(parsed.get("score_b"))
 
-    chosen_field = feedback_a_field if winner == "a" else feedback_b_field
-    rejected_field = feedback_b_field if winner == "a" else feedback_a_field
+
+def choose_feedback(model, tokenizer, record, feedback_a_field, feedback_b_field):
+    forward_score_a, forward_score_b = score_display_order(
+        model,
+        tokenizer,
+        record,
+        feedback_a_field,
+        feedback_b_field,
+    )
+    swapped_score_a, swapped_score_b = score_display_order(
+        model,
+        tokenizer,
+        record,
+        feedback_b_field,
+        feedback_a_field,
+    )
+
+    feedback_a_avg_score = round((forward_score_a + swapped_score_b) / 2.0, 2)
+    feedback_b_avg_score = round((forward_score_b + swapped_score_a) / 2.0, 2)
+
+    if feedback_a_avg_score >= feedback_b_avg_score:
+        winner = "a"
+        chosen_field = feedback_a_field
+        rejected_field = feedback_b_field
+    else:
+        winner = "b"
+        chosen_field = feedback_b_field
+        rejected_field = feedback_a_field
 
     return {
         "id": record.get("id"),
@@ -181,7 +227,13 @@ def choose_feedback(model, tokenizer, record, feedback_a_field, feedback_b_field
         "feedback_a_temperature": record.get("feedback_a_temperature", ""),
         "feedback_b_temperature": record.get("feedback_b_temperature", ""),
         "winner": winner,
-        "reason": reason,
+        "feedback_a_avg_score": feedback_a_avg_score,
+        "feedback_b_avg_score": feedback_b_avg_score,
+        "forward_score_a": forward_score_a,
+        "forward_score_b": forward_score_b,
+        "swapped_score_a": swapped_score_a,
+        "swapped_score_b": swapped_score_b,
+        "preference_method": "two_pass_swapped_order_average_score",
     }
 
 

@@ -13,6 +13,20 @@ DEFAULT_DATA_PATH = ROOT_DIR / "train" / "sft" / "sft_dataset.jsonl"
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "train" / "model" / "sft_adapter"
 DEFAULT_MODEL = "Qwen/Qwen2.5-3B-Instruct"
 
+# Variables for SFT training.
+DEFAULT_MAX_SEQ_LENGTH = 2048  # Maximum token length for each formatted training example.
+DEFAULT_EPOCHS = 1.0  # Number of full passes over the SFT dataset.
+DEFAULT_BATCH_SIZE = 1  # Per-device batch size used during training.
+DEFAULT_GRAD_ACCUM = 8  # Number of mini-batches accumulated before one optimizer step.
+DEFAULT_LEARNING_RATE = 1e-4  # Step size for updating LoRA adapter weights.
+DEFAULT_SAVE_STEPS = 200  # Save a checkpoint every N optimizer steps.
+DEFAULT_LOGGING_STEPS = 10  # Log training metrics every N optimizer steps.
+
+LORA_R = 16  # Rank of the LoRA update matrices.
+LORA_ALPHA = 32  # Scaling factor applied to LoRA updates.
+LORA_DROPOUT = 0.05  # Dropout applied inside LoRA layers to reduce overfitting.
+LORA_TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]  # Transformer modules adapted by LoRA.
+
 
 def load_tokenizer(model_name):
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
@@ -35,13 +49,13 @@ def main():
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA_PATH)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--max-seq-length", type=int, default=2048)
-    parser.add_argument("--epochs", type=float, default=1.0)
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--grad-accum", type=int, default=8)
-    parser.add_argument("--learning-rate", type=float, default=2e-4)
-    parser.add_argument("--save-steps", type=int, default=200)
-    parser.add_argument("--logging-steps", type=int, default=10)
+    parser.add_argument("--max-seq-length", type=int, default=DEFAULT_MAX_SEQ_LENGTH)
+    parser.add_argument("--epochs", type=float, default=DEFAULT_EPOCHS)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    parser.add_argument("--grad-accum", type=int, default=DEFAULT_GRAD_ACCUM)
+    parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
+    parser.add_argument("--save-steps", type=int, default=DEFAULT_SAVE_STEPS)
+    parser.add_argument("--logging-steps", type=int, default=DEFAULT_LOGGING_STEPS)
     args = parser.parse_args()
 
     tokenizer = load_tokenizer(args.model)
@@ -64,12 +78,12 @@ def main():
     model.config.use_cache = False
 
     peft_config = LoraConfig(
-        r=16,
-        lora_alpha=32,
-        lora_dropout=0.05,
+        r=LORA_R,
+        lora_alpha=LORA_ALPHA,
+        lora_dropout=LORA_DROPOUT,
         bias="none",
         task_type="CAUSAL_LM",
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        target_modules=LORA_TARGET_MODULES,
     )
 
     training_args = SFTConfig(

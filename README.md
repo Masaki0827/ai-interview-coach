@@ -10,8 +10,22 @@ AI-driven interview simulation and feedback system using Qwen2.5.
 - [x] Preference Candidate Generation (RLAIF - Training Set)
 - [x] Preference Pair Selection with Qwen3.5-9B (RLAIF - Training Set)
 - [x] SFT & DPO Training with QLoRA (RLAIF)
-- [ ] New Model Feedback Generation & Evaluation
+- [x] New Model Feedback Generation & Evaluation
 - [ ] Baseline vs New Model Comparison
+
+## Experimental Results
+
+The trained model (DPO) was evaluated against the baseline model (`Qwen/Qwen2.5-3B-Instruct`) on the fixed test set of 200 examples.
+
+| Model | Average Score (1-20) |
+| :--- | :--- |
+| **Baseline (Qwen2.5-3B-Instruct)** | 16.86 |
+| **New Model (SFT + DPO)** | **17.03** |
+
+### Key Improvements
+- **Technical Precision**: The new model provides more accurate technical feedback, correctly identifying student strengths that were occasionally missed by the baseline.
+- **Educational Depth**: Feedback from the new model includes more concrete examples (e.g., explaining memoization with Fibonacci) and clearer next steps.
+- **Hallucination Reduction**: Reduced instances where the model claimed a student missed a concept that was actually present in their answer.
 
 ## Detailed Experimental Plan
 

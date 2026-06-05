@@ -1,0 +1,7 @@
+metric,baseline_average,new_model_average,delta
+technical_correctness,16.785,16.92,0.135
+specificity,16.875,17.06,0.185
+helpfulness,16.875,17.05,0.175
+actionability,16.885,17.05,0.165
+interview_coaching_quality,16.875,17.06,0.185
+overall_score,16.861,17.032,0.171

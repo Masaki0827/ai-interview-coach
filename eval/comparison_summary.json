@@ -1,0 +1,52 @@
+{
+  "total_matched_examples": 200,
+  "baseline_records": 200,
+  "new_model_records": 200,
+  "missing_in_new_model": [],
+  "missing_in_baseline": [],
+  "win_loss_tie": {
+    "new_model_wins": 48,
+    "baseline_wins": 40,
+    "ties": 112,
+    "new_model_win_rate_all": 0.24,
+    "new_model_win_rate_excluding_ties": 0.5455
+  },
+  "dimension_averages": [
+    {
+      "metric": "technical_correctness",
+      "baseline_average": 16.785,
+      "new_model_average": 16.92,
+      "delta": 0.135
+    },
+    {
+      "metric": "specificity",
+      "baseline_average": 16.875,
+      "new_model_average": 17.06,
+      "delta": 0.185
+    },
+    {
+      "metric": "helpfulness",
+      "baseline_average": 16.875,
+      "new_model_average": 17.05,
+      "delta": 0.175
+    },
+    {
+      "metric": "actionability",
+      "baseline_average": 16.885,
+      "new_model_average": 17.05,
+      "delta": 0.165
+    },
+    {
+      "metric": "interview_coaching_quality",
+      "baseline_average": 16.875,
+      "new_model_average": 17.06,
+      "delta": 0.185
+    },
+    {
+      "metric": "overall_score",
+      "baseline_average": 16.861,
+      "new_model_average": 17.032,
+      "delta": 0.171
+    }
+  ]
+}

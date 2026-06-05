@@ -9,7 +9,7 @@ AI-driven interview simulation and feedback system using Qwen2.5.
 - [x] Baseline Feedback Scoring with Qwen3.5-9B (Judge)
 - [x] Preference Candidate Generation (RLAIF - Training Set)
 - [x] Preference Pair Selection with Qwen3.5-9B (RLAIF - Training Set)
-- [ ] SFT & DPO Training with QLoRA (RLAIF)
+- [x] SFT & DPO Training with QLoRA (RLAIF)
 - [ ] New Model Feedback Generation & Evaluation
 - [ ] Baseline vs New Model Comparison
 

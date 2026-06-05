@@ -124,6 +124,11 @@ Human evaluators compare a subset of baseline and trained model feedback. They j
 - **Judge Model**: `Qwen/Qwen3.5-9B`
   - Used for feedback scoring and preference selection (RLAIF).
 
+## Trained Models
+The following QLoRA adapters are available on Hugging Face:
+- **SFT Adapter**: [Hank122222222/ai-interview-coach-sft-adapter](https://huggingface.co/Hank122222222/ai-interview-coach-sft-adapter)
+- **DPO Adapter**: [Hank122222222/ai-interview-coach-dpo-adapter](https://huggingface.co/Hank122222222/ai-interview-coach-dpo-adapter)
+
 ## Methodology Details
 
 ### Student Simulation Profile
